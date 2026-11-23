@@ -1,0 +1,67 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light dark;
+  --background: 0 0% 100%;
+  --foreground: 240 10% 4%;
+  --card: 0 0% 100%;
+  --muted: 240 5% 96%;
+  --muted-foreground: 240 4% 42%;
+  --border: 240 6% 90%;
+  --primary: 240 6% 10%;
+  --primary-foreground: 0 0% 98%;
+  --ring: 240 5% 60%;
+  --danger: 0 72% 46%;
+  --success: 152 60% 32%;
+  --warning: 32 90% 40%;
+  /* Gráficas: paleta categórica validada (azul · naranja · aqua) */
+  --chart-sub: #2a78d6;
+  --chart-debt: #eb6834;
+  --chart-other: #1baf7a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: 240 6% 6%;
+    --foreground: 0 0% 96%;
+    --card: 240 5% 9%;
+    --muted: 240 4% 14%;
+    --muted-foreground: 240 5% 66%;
+    --border: 240 4% 18%;
+    --primary: 0 0% 96%;
+    --primary-foreground: 240 6% 8%;
+    --ring: 240 5% 50%;
+    --danger: 0 84% 64%;
+    --success: 152 55% 52%;
+    --warning: 38 92% 58%;
+    --chart-sub: #3987e5;
+    --chart-debt: #d95926;
+    --chart-other: #199e70;
+  }
+}
+
+html,
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+/* Evita el zoom de iOS al enfocar inputs */
+@media (max-width: 640px) {
+  input,
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
