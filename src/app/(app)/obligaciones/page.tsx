@@ -1,12 +1,15 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Check, Pause, Pencil, Play, Plus, Search, Trash2 } from "lucide-react";
+import { Check, ListPlus, Pause, Pencil, Play, Plus, Search, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { refresh, useLoad } from "@/lib/refresh";
+import { BackfillDialog } from "@/components/backfill-dialog";
 import { ObligationForm } from "@/components/obligation-form";
 import { PaymentForm } from "@/components/payment-form";
+import { ReportLink } from "@/components/report-link";
 import { Badge, Button, Card, Empty, Input, Modal } from "@/components/ui";
-import { CYCLE_LABEL, cn, daysUntil, dueLabel, fmtDate, money } from "@/lib/utils";
+import { overdueDates } from "@/lib/rentals";
+import { CYCLE_LABEL, cn, daysUntil, dueLabel, fmtDate, money, toLocalInput } from "@/lib/utils";
 import type { Obligation } from "@/lib/types";
 
 type Tab = "all" | "subscription" | "debt";
@@ -21,6 +24,7 @@ export default function ObligacionesPage() {
   const [showPaidOff, setShowPaidOff] = useState(false);
   const [form, setForm] = useState<{ open: boolean; item?: Obligation }>({ open: false });
   const [pay, setPay] = useState<Obligation | null>(null);
+  const [late, setLate] = useState<Obligation | null>(null);
 
   useLoad(async () => {
     const sb = createClient();
@@ -51,6 +55,15 @@ export default function ObligacionesPage() {
       ),
     [items, tab, q, showPaidOff]
   );
+
+  /** Periodos vencidos desde next_due_date; en deudas con cuotas conocidas no se pasa de las cuotas que faltan. */
+  function lateDatesOf(o: Obligation): Date[] {
+    if (o.status !== "active") return [];
+    const dates = overdueDates(o.next_due_date, o.billing_cycle);
+    const nTotal = o.installments_total ?? (o.type === "debt" && o.total_amount && o.installment_amount > 0 ? Math.ceil(o.total_amount / o.installment_amount) : null);
+    if (o.type === "debt" && nTotal != null) return dates.slice(0, Math.max(0, nTotal - (paidCount[o.id] ?? 0)));
+    return dates;
+  }
 
   async function togglePause(o: Obligation) {
     await createClient().from("obligations").update({ status: o.status === "paused" ? "active" : "paused" }).eq("id", o.id);
@@ -155,7 +168,13 @@ export default function ObligacionesPage() {
                     <Check className="h-3.5 w-3.5" /> Pagada
                   </Button>
                 )}
+                {lateDatesOf(o).length >= 2 && (
+                  <Button size="sm" variant="outline" onClick={() => setLate(o)}>
+                    <ListPlus className="h-3.5 w-3.5" /> Atrasados ({lateDatesOf(o).length})
+                  </Button>
+                )}
                 <div className="ml-auto flex items-center">
+                  <ReportLink tipo="obligacion" id={o.id} />
                   {o.status !== "paid_off" && (
                     <Button size="icon" variant="ghost" onClick={() => togglePause(o)} aria-label={o.status === "paused" ? "Reanudar" : "Pausar"}>
                       {o.status === "paused" ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
@@ -177,6 +196,41 @@ export default function ObligacionesPage() {
       <Modal open={form.open} onClose={() => setForm({ open: false })} title={form.item ? "Editar obligación" : "Nueva obligación"}>
         <ObligationForm key={form.item?.id ?? "new"} initial={form.item} onDone={() => setForm({ open: false })} />
       </Modal>
+      {late && (
+        <BackfillDialog
+          open
+          onClose={() => setLate(null)}
+          title={`Periodos atrasados · ${late.title}`}
+          intro="Marca los pagos que ya hiciste pero no registraste. Cada uno queda en la bitácora con su fecha (puedes ajustarla) y la próxima fecha de pago se recalcula sola."
+          initialRows={lateDatesOf(late).map((d, i) => ({
+            key: String(i),
+            label: `Vencía el ${fmtDate(d)}`,
+            date: toLocalInput(d),
+            amount: String(late.installment_amount),
+            checked: true,
+          }))}
+          prefixOnly
+          submitLabel="Registrar pagos"
+          onSubmit={async (items, method) => {
+            const sb = createClient();
+            // Se registran en orden: cada pago avanza un ciclo la próxima fecha
+            for (let i = 0; i < items.length; i++) {
+              const { error } = await sb.rpc("register_payment", {
+                p_obligation_id: late.id,
+                p_amount: items[i].amount,
+                p_method: method || null,
+                p_paid_at: items[i].date,
+                p_note: null,
+              });
+              if (error) {
+                if (i > 0) refresh();
+                return `Se registraron ${i} de ${items.length}. Error: ${error.message}. Cierra y vuelve a abrir para ver lo que falta.`;
+              }
+            }
+            return null;
+          }}
+        />
+      )}
       <Modal open={!!pay} onClose={() => setPay(null)} title="Registrar pago">
         {pay && <PaymentForm obligation={pay} onDone={() => setPay(null)} />}
       </Modal>

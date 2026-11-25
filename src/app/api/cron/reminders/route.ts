@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { fetchAll } from "@/lib/fetch-all";
+import { diffDays, fmtYmd, rentalPeriods, rentalSummary } from "@/lib/rentals";
+import type { Rental, RentalPayment } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -96,6 +99,29 @@ export async function GET(req: Request) {
         sort: days,
       });
     }
+  }
+
+  // Alquileres: periodos ya iniciados sin cobrar, o el próximo en 2 días o menos
+  try {
+    const [rentals, rpays] = await Promise.all([fetchAll<Rental>(admin, "rentals", "*"), fetchAll<RentalPayment>(admin, "rental_payments", "*")]);
+    const today = ymd(new Date());
+    for (const r of rentals.filter((x) => x.status === "active")) {
+      const sum = rentalSummary(rentalPeriods(r, rpays.filter((p) => p.rental_id === r.id), today));
+      const first = sum.unpaidPast[0];
+      const next = !first && sum.next && diffDays(today, sum.next.start) <= 2 ? sum.next : null;
+      const target = first ?? next;
+      if (!target) continue;
+      const days = diffDays(today, target.start);
+      bucket(r.user_id).collect.push({
+        title: `Cobrar alquiler · ${r.tenant_name} (${r.item})` + (sum.unpaidPast.length > 1 ? ` · ${sum.unpaidPast.length} periodos` : ""),
+        amount: money(first ? sum.arrears : target.remaining, r.currency),
+        date: fmtYmd(target.start),
+        days,
+        sort: days,
+      });
+    }
+  } catch {
+    /* migration-v3 aún no aplicada: se envían solo pagos y préstamos */
   }
 
   const site = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";

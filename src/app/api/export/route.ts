@@ -30,17 +30,19 @@ export async function GET(req: Request) {
     return { data };
   };
 
-  const [obs, logs, loans, reps] = await Promise.all([
+  const [obs, logs, loans, reps, rentals, rentPays] = await Promise.all([
     all("obligations", "*", "created_at"),
     all("payment_logs", "*, obligations(title,type,category)", "paid_at"),
     all("lent_money", "*", "lent_at"),
     all("lent_repayments", "*", "received_at"),
+    all("rentals", "*", "created_at"),
+    all("rental_payments", "*, rentals(tenant_name,item)", "received_at"),
   ]);
   const stamp = new Date().toISOString().slice(0, 10);
 
   if (format === "json") {
     const body = JSON.stringify(
-      { exported_at: new Date().toISOString(), obligations: obs.data, payment_logs: logs.data, lent_money: loans.data, lent_repayments: reps.data },
+      { exported_at: new Date().toISOString(), obligations: obs.data, payment_logs: logs.data, lent_money: loans.data, lent_repayments: reps.data, rentals: rentals.data, rental_payments: rentPays.data },
       null,
       2
     );
@@ -65,6 +67,9 @@ export async function GET(req: Request) {
   const byLoan = new Map((loans.data ?? []).map((l: any) => [l.id, l.person_name]));
   (reps.data ?? []).forEach((r: any) =>
     rows.push(["abono", r.received_at, byLoan.get(r.lent_id) ?? "", r.amount, r.method ?? "", "", ""])
+  );
+  rentPays.data.forEach((x: any) =>
+    rows.push(["alquiler", x.received_at, x.rentals?.tenant_name ?? "", x.amount, x.method ?? "", x.note ?? "", x.rentals?.item ?? ""])
   );
   rows.sort((a, b) => +new Date(a[1]) - +new Date(b[1]));
 

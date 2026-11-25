@@ -6,15 +6,17 @@ import { refresh, useOnRefresh } from "@/lib/refresh";
 import { ImportDialog } from "@/components/import-dialog";
 import { LentForm } from "@/components/lent-form";
 import { PaymentForm } from "@/components/payment-form";
+import { RentalPaymentForm } from "@/components/rental-payment-form";
 import { RepaymentForm } from "@/components/repayment-form";
 import { Badge, Button, Card, Empty, Input, Modal, Select } from "@/components/ui";
 import { METHODS, cn, fmtDay, money, wasEdited } from "@/lib/utils";
-import type { LedgerEntry, Lent, PaymentLog, Repayment } from "@/lib/types";
+import type { LedgerEntry, Lent, PaymentLog, Rental, RentalPayment, Repayment } from "@/lib/types";
 
-type TypeFilter = "all" | "subscription" | "debt" | "suelto" | "prestamo" | "abono";
-type Editing = { kind: LedgerEntry["kind"]; log?: PaymentLog; loan?: Lent; rep?: Repayment } | null;
+type TypeFilter = "all" | "subscription" | "debt" | "suelto" | "prestamo" | "abono" | "alquiler";
+type Editing = { kind: LedgerEntry["kind"]; log?: PaymentLog; loan?: Lent; rep?: Repayment; rental?: Rental; rentalPays?: RentalPayment[]; rentalPay?: RentalPayment } | null;
 
-const KIND_LABEL: Record<LedgerEntry["kind"], string> = { pago: "Pago", prestamo: "Préstamo", abono: "Abono" };
+const KIND_LABEL: Record<LedgerEntry["kind"], string> = { pago: "Pago", prestamo: "Préstamo", abono: "Abono", alquiler: "Alquiler" };
+const isIn = (k: LedgerEntry["kind"]) => k === "abono" || k === "alquiler";
 const SIZES = [25, 50, 100];
 
 /** Quita caracteres que rompen la sintaxis de filtros de PostgREST o actúan como comodines. */
@@ -111,6 +113,12 @@ export default function BitacoraPage() {
     } else if (e.kind === "prestamo") {
       const { data } = await sb.from("lent_money").select("*").eq("id", e.id).single();
       if (data) setEditing({ kind: "prestamo", loan: data as Lent });
+    } else if (e.kind === "alquiler") {
+      const { data: rp } = await sb.from("rental_payments").select("*").eq("id", e.id).single();
+      if (!rp) return;
+      const rid = (rp as RentalPayment).rental_id;
+      const [{ data: rental }, { data: all }] = await Promise.all([sb.from("rentals").select("*").eq("id", rid).single(), sb.from("rental_payments").select("*").eq("rental_id", rid)]);
+      if (rental) setEditing({ kind: "alquiler", rental: rental as Rental, rentalPays: (all as RentalPayment[]) ?? [], rentalPay: rp as RentalPayment });
     } else {
       const { data: rep } = await sb.from("lent_repayments").select("*").eq("id", e.id).single();
       if (!rep) return;
@@ -123,7 +131,7 @@ export default function BitacoraPage() {
     const extra = e.kind === "pago" && e.type !== "suelto" ? " Esto no revierte la próxima fecha de pago de la obligación." : "";
     if (!confirm(`¿Eliminar este registro?${extra}`)) return;
     const sb = createClient();
-    const table = e.kind === "pago" ? "payment_logs" : e.kind === "prestamo" ? "lent_money" : "lent_repayments";
+    const table = e.kind === "pago" ? "payment_logs" : e.kind === "prestamo" ? "lent_money" : e.kind === "alquiler" ? "rental_payments" : "lent_repayments";
     await sb.from(table).delete().eq("id", e.id);
     refresh();
   }
@@ -164,6 +172,7 @@ export default function BitacoraPage() {
           <option value="suelto">Pagos sueltos</option>
           <option value="prestamo">Préstamos</option>
           <option value="abono">Abonos recibidos</option>
+          <option value="alquiler">Alquileres cobrados</option>
         </Select>
         <Select value={method} onChange={(e) => setMethod(e.target.value)}>
           <option value="">Todos los métodos</option>
@@ -205,8 +214,8 @@ export default function BitacoraPage() {
                       {e.note ? ` · ${e.note}` : ""}
                     </p>
                   </div>
-                  <p className={cn("shrink-0 text-sm font-semibold", e.kind === "abono" && "text-success")}>
-                    {e.kind === "abono" ? "+" : "−"}
+                  <p className={cn("shrink-0 text-sm font-semibold", isIn(e.kind) && "text-success")}>
+                    {isIn(e.kind) ? "+" : "−"}
                     {money(Number(e.amount))}
                   </p>
                   <div className="flex shrink-0">
@@ -253,6 +262,7 @@ export default function BitacoraPage() {
       <Modal open={!!editing} onClose={() => setEditing(null)} title={`Editar ${editing ? KIND_LABEL[editing.kind].toLowerCase() : ""}`}>
         {editing?.kind === "pago" && <PaymentForm key={editing.log!.id} log={editing.log} onDone={() => setEditing(null)} />}
         {editing?.kind === "prestamo" && <LentForm key={editing.loan!.id} initial={editing.loan} onDone={() => setEditing(null)} />}
+        {editing?.kind === "alquiler" && <RentalPaymentForm key={editing.rentalPay!.id} rental={editing.rental!} payments={editing.rentalPays ?? []} payment={editing.rentalPay} onDone={() => setEditing(null)} />}
         {editing?.kind === "abono" && <RepaymentForm key={editing.rep!.id} lent={editing.loan!} repayment={editing.rep} onDone={() => setEditing(null)} />}
       </Modal>
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} />

@@ -23,6 +23,7 @@ const iso = (v: unknown) => {
 };
 const str = (v: unknown, max = 1000) => (v === null || v === undefined || String(v).trim() === "" ? null : String(v).trim().slice(0, max));
 const isId = (v: unknown): v is string => typeof v === "string" && UUID.test(v);
+const day = (v: unknown) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v) && !Number.isNaN(Date.parse(v.slice(0, 10))) ? v.slice(0, 10) : null);
 /** created_at / updated_at solo si vienen válidos; si no, la base usa now(). */
 const stamps = (r: Obj) => ({
   ...(iso(r.created_at) ? { created_at: iso(r.created_at) } : {}),
@@ -71,7 +72,9 @@ async function importJson(sb: SB, uid: string, data: unknown): Promise<Report> {
   const rawP = arr(data.payment_logs);
   const rawL = arr(data.lent_money);
   const rawR = arr(data.lent_repayments);
-  const total = rawO.length + rawP.length + rawL.length + rawR.length;
+  const rawRent = arr(data.rentals);
+  const rawRentPay = arr(data.rental_payments);
+  const total = rawO.length + rawP.length + rawL.length + rawR.length + rawRent.length + rawRentPay.length;
   if (total === 0) throw new Error("El respaldo está vacío o no es un respaldo de Ledger.");
   if (total > MAX_ROWS) throw new Error(`Demasiados registros (máximo ${MAX_ROWS}).`);
 
@@ -95,6 +98,7 @@ async function importJson(sb: SB, uid: string, data: unknown): Promise<Report> {
       category: str(r.category, 100),
       total_amount: totalAmt >= 0 ? totalAmt : null,
       installments_total: inst > 0 ? Math.floor(inst) : null,
+      started_at: iso(r.started_at),
       installment_amount: amount,
       currency: (str(r.currency, 3) ?? "USD").toUpperCase(),
       billing_cycle: r.billing_cycle,
@@ -122,6 +126,30 @@ async function importJson(sb: SB, uid: string, data: unknown): Promise<Report> {
       lent_at: iso(r.lent_at),
       expected_return_date: iso(r.expected_return_date),
       payment_method: str(r.payment_method, 100),
+      notes: str(r.notes, 2000),
+      ...stamps(r),
+    });
+  }
+
+  const rentals: Obj[] = [];
+  for (const r of rawRent) {
+    const rent = num(r.rent_amount);
+    if (!isId(r.id) || !str(r.tenant_name) || !str(r.item) || !(rent > 0) || !["weekly", "biweekly", "monthly"].includes(String(r.billing_cycle)) || !day(r.start_date)) {
+      invalid++;
+      continue;
+    }
+    rentals.push({
+      id: r.id,
+      user_id: uid,
+      tenant_name: str(r.tenant_name, 200),
+      item: str(r.item, 200),
+      rent_amount: rent,
+      currency: (str(r.currency, 3) ?? "USD").toUpperCase(),
+      billing_cycle: r.billing_cycle,
+      start_date: day(r.start_date),
+      end_date: day(r.end_date),
+      deposit_amount: num(r.deposit_amount) >= 0 ? num(r.deposit_amount) : null,
+      status: r.status === "ended" ? "ended" : "active",
       notes: str(r.notes, 2000),
       ...stamps(r),
     });
@@ -165,16 +193,30 @@ async function importJson(sb: SB, uid: string, data: unknown): Promise<Report> {
     repayments.push({ id: r.id, user_id: uid, lent_id: r.lent_id, amount, received_at: iso(r.received_at), method: str(r.method, 100), ...stamps(r) });
   }
 
+  const rentalIds = new Set([...(await fetchAll(sb, "rentals", "id")).map((x) => String(x.id)), ...rentals.map((x) => String(x.id))]);
+  const rentalPays: Obj[] = [];
+  for (const r of rawRentPay) {
+    const amount = num(r.amount);
+    const idx = num(r.period_index);
+    if (!isId(r.id) || !isId(r.rental_id) || !rentalIds.has(r.rental_id) || !(amount > 0) || !(idx >= 0) || !iso(r.received_at)) {
+      invalid++;
+      continue;
+    }
+    rentalPays.push({ id: r.id, user_id: uid, rental_id: r.rental_id, period_index: Math.floor(idx), amount, received_at: iso(r.received_at), method: str(r.method, 100), note: str(r.note, 2000), ...stamps(r) });
+  }
+
   // Orden importante por las claves foráneas
   const inserted = {
     obligations: (await insertAll(sb, "obligations", obligations, true)).length,
     lent_money: (await insertAll(sb, "lent_money", loans, true)).length,
+    rentals: (await insertAll(sb, "rentals", rentals, true)).length,
     payment_logs: (await insertAll(sb, "payment_logs", logs, true)).length,
     lent_repayments: (await insertAll(sb, "lent_repayments", repayments, true)).length,
+    rental_payments: (await insertAll(sb, "rental_payments", rentalPays, true)).length,
   };
 
-  const valid = obligations.length + loans.length + logs.length + repayments.length;
-  const done = inserted.obligations + inserted.lent_money + inserted.payment_logs + inserted.lent_repayments;
+  const valid = obligations.length + loans.length + logs.length + repayments.length + rentals.length + rentalPays.length;
+  const done = Object.values(inserted).reduce((a, b) => a + b, 0);
   if (unlinked > 0) notes.push(`${unlinked} pago(s) apuntaban a una obligación que no existe y se importaron como pagos sueltos.`);
   return { inserted, skipped: valid - done, invalid, notes };
 }
@@ -191,12 +233,17 @@ async function importCsv(sb: SB, uid: string, rows: unknown): Promise<Report> {
   type P = { kind: "pago" | "prestamo" | "abono"; when: string; concept: string | null; amount: number; method: string | null; note: string | null };
   const parsed: P[] = [];
   let invalid = 0;
+  let rentRows = 0;
   for (const raw of rows) {
     if (!isObj(raw)) {
       invalid++;
       continue;
     }
     const kind = String(raw.tipo ?? "").trim().toLowerCase();
+    if (kind === "alquiler") {
+      rentRows++;
+      continue;
+    }
     const when = iso(raw.fecha_hora_utc ?? raw.fecha);
     const amount = num(raw.monto);
     if (!["pago", "prestamo", "abono"].includes(kind) || !when || !(amount >= 0) || (kind !== "pago" && !(amount > 0))) {
@@ -274,6 +321,7 @@ async function importCsv(sb: SB, uid: string, rows: unknown): Promise<Report> {
   inserted.lent_repayments = (await insertAll(sb, "lent_repayments", reps, false)).length;
 
   if (unmatched > 0) notes.push(`${unmatched} abono(s) no se importaron porque no hay un préstamo de esa persona con saldo suficiente.`);
+  if (rentRows > 0) notes.push(`${rentRows} fila(s) de alquiler no se importan desde CSV (el CSV no guarda el contrato). Restáuralas con el respaldo JSON.`);
   notes.push("Los pagos del CSV se importan como pagos sueltos (el CSV no guarda a qué obligación pertenecían). Para conservar esa relación usa el respaldo JSON.");
   return { inserted, skipped, invalid, notes };
 }

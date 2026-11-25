@@ -2,12 +2,14 @@
 import { useMemo, useState } from "react";
 import { CalendarClock, HandCoins, Repeat, Wallet } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAll } from "@/lib/fetch-all";
+import { rentalPeriods, rentalSummary, todayYmd } from "@/lib/rentals";
 import { useLoad } from "@/lib/refresh";
 import { MonthComparison, type MonthTotals } from "@/components/month-comparison";
 import { PaymentsChart } from "@/components/payments-chart";
 import { Card, Empty } from "@/components/ui";
 import { cn, daysUntil, dueLabel, fmtDate, money, monthKey, monthlyEquivalent } from "@/lib/utils";
-import type { Lent, Obligation, PaymentLog } from "@/lib/types";
+import type { Lent, Obligation, PaymentLog, Rental, RentalPayment } from "@/lib/types";
 
 function Kpi({ icon: Icon, label, value, sub }: { icon: typeof Wallet; label: string; value: string; sub?: string }) {
   return (
@@ -26,6 +28,8 @@ export default function Dashboard() {
   const [obs, setObs] = useState<Obligation[]>([]);
   const [lent, setLent] = useState<Lent[]>([]);
   const [logs, setLogs] = useState<PaymentLog[]>([]);
+  const [rentals, setRentals] = useState<Rental[]>([]);
+  const [rentalPays, setRentalPays] = useState<RentalPayment[]>([]);
   const [loading, setLoading] = useState(true);
 
   useLoad(async () => {
@@ -38,6 +42,13 @@ export default function Dashboard() {
     setObs((o.data as Obligation[]) ?? []);
     setLent((l.data as Lent[]) ?? []);
     setLogs((p.data as PaymentLog[]) ?? []);
+    try {
+      const [r, rp] = await Promise.all([fetchAll<Rental>(sb, "rentals", "*", "created_at"), fetchAll<RentalPayment>(sb, "rental_payments", "*", "received_at")]);
+      setRentals(r);
+      setRentalPays(rp);
+    } catch {
+      /* migration-v3 aún no aplicada: el resumen sigue funcionando sin alquileres */
+    }
     setLoading(false);
   });
 
@@ -51,7 +62,12 @@ export default function Dashboard() {
       .filter((o) => o.type === "debt" && o.total_amount != null)
       .reduce((s, o) => s + Math.max(0, (o.total_amount ?? 0) - (paidBy[o.id] ?? 0)), 0);
 
-    const receivable = lent.filter((l) => l.status !== "settled").reduce((s, l) => s + (l.amount_lent - l.amount_returned), 0);
+    const loansReceivable = lent.filter((l) => l.status !== "settled").reduce((s, l) => s + (l.amount_lent - l.amount_returned), 0);
+    const today = todayYmd();
+    const rentArrears = rentals
+      .filter((r) => r.status === "active")
+      .reduce((s, r) => s + rentalSummary(rentalPeriods(r, rentalPays.filter((p) => p.rental_id === r.id), today)).arrears, 0);
+    const receivable = loansReceivable + rentArrears;
     const next = [...active].sort((a, b) => +new Date(a.next_due_date) - +new Date(b.next_due_date))[0];
 
     // Pagos por mes y por tipo (suscripción / deuda / otros)
@@ -81,8 +97,8 @@ export default function Dashboard() {
       labels: { current: monthName(0, "long"), previous: monthName(1, "long") },
     };
 
-    return { fixed, debt, receivable, next, chart, cmp };
-  }, [obs, lent, logs]);
+    return { fixed, debt, receivable, rentArrears, next, chart, cmp };
+  }, [obs, lent, logs, rentals, rentalPays]);
 
   // Línea de tiempo: vencimientos próximos (arriba) y movimientos recientes (abajo)
   const upcoming = useMemo(
@@ -106,7 +122,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Kpi icon={Repeat} label="Gasto fijo mensual" value={money(k.fixed)} sub="Suscripciones activas" />
         <Kpi icon={Wallet} label="Deuda pendiente" value={money(k.debt)} sub="Deudas con monto total" />
-        <Kpi icon={HandCoins} label="Por cobrar" value={money(k.receivable)} sub="Préstamos activos" />
+        <Kpi icon={HandCoins} label="Por cobrar" value={money(k.receivable)} sub={k.rentArrears > 0 ? `Incluye ${money(k.rentArrears)} de alquiler atrasado` : "Préstamos activos"} />
         <Kpi
           icon={CalendarClock}
           label="Próximo pago"

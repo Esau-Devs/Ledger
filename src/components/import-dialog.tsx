@@ -21,6 +21,8 @@ const LABEL: Record<string, string> = {
   payment_logs: "pagos",
   lent_money: "préstamos",
   lent_repayments: "abonos",
+  rentals: "alquileres",
+  rental_payments: "cobros de alquiler",
 };
 
 export function ImportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -56,18 +58,18 @@ export function ImportDialog({ open, onClose }: { open: boolean; onClose: () => 
       if (file.name.toLowerCase().endsWith(".json")) {
         const data = JSON.parse(text);
         const n = (k: string) => (Array.isArray(data?.[k]) ? data[k].length : 0);
-        const total = n("obligations") + n("payment_logs") + n("lent_money") + n("lent_repayments");
+        const total = n("obligations") + n("payment_logs") + n("lent_money") + n("lent_repayments") + n("rentals") + n("rental_payments");
         if (total === 0) return setErr("No parece un respaldo JSON de Ledger.");
         setParsed({
           format: "json",
           payload: data,
-          summary: `${n("obligations")} obligaciones · ${n("payment_logs")} pagos · ${n("lent_money")} préstamos · ${n("lent_repayments")} abonos`,
+          summary: `${n("obligations")} obligaciones · ${n("payment_logs")} pagos · ${n("lent_money")} préstamos · ${n("lent_repayments")} abonos · ${n("rentals")} alquileres · ${n("rental_payments")} cobros de alquiler`,
         });
       } else if (file.name.toLowerCase().endsWith(".csv")) {
         const rows = csvToObjects(text);
         if (rows.length === 0 || !("tipo" in rows[0]) || !("monto" in rows[0])) return setErr("El CSV debe ser el exportado por Ledger (columnas tipo, fecha_hora_utc, monto…).");
         const c = (t: string) => rows.filter((r) => r.tipo?.trim().toLowerCase() === t).length;
-        setParsed({ format: "csv", payload: rows, summary: `${c("pago")} pagos · ${c("prestamo")} préstamos · ${c("abono")} abonos` });
+        setParsed({ format: "csv", payload: rows, summary: `${c("pago")} pagos · ${c("prestamo")} préstamos · ${c("abono")} abonos${c("alquiler") ? ` (${c("alquiler")} de alquiler se omiten: usa el JSON)` : ""}` });
       } else {
         setErr("Usa un archivo .json o .csv exportado por Ledger.");
       }

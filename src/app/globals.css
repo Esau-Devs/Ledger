@@ -65,3 +65,31 @@ body {
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom);
 }
+
+/* Impresión / PDF de informes: siempre tema claro y sin márgenes de pantalla */
+@page {
+  margin: 14mm;
+}
+@media print {
+  :root {
+    color-scheme: light;
+    --background: 0 0% 100%;
+    --foreground: 240 10% 4%;
+    --card: 0 0% 100%;
+    --muted: 240 5% 96%;
+    --muted-foreground: 240 4% 36%;
+    --border: 240 6% 82%;
+    --primary: 240 6% 10%;
+    --primary-foreground: 0 0% 98%;
+    --danger: 0 72% 46%;
+    --success: 152 60% 32%;
+    --warning: 32 90% 40%;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #09090b !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

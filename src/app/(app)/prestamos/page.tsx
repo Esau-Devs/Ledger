@@ -1,17 +1,22 @@
 "use client";
-import { Fragment, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, HandCoins, Pencil, Plus, Search, Trash2 } from "lucide-react";
+import { Fragment, useMemo, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronDown, ChevronRight, HandCoins, ListPlus, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { refresh, useLoad } from "@/lib/refresh";
+import { BackfillDialog } from "@/components/backfill-dialog";
 import { LentForm } from "@/components/lent-form";
+import { RentalsSection } from "@/components/rentals-section";
 import { RepaymentForm } from "@/components/repayment-form";
+import { ReportLink } from "@/components/report-link";
 import { Badge, Button, Card, Empty, Input, Modal } from "@/components/ui";
-import { cn, daysUntil, fmtDate, fmtDay, money } from "@/lib/utils";
+import { cn, daysUntil, fmtDate, fmtDay, money, toLocalInput } from "@/lib/utils";
 import type { Lent, Repayment } from "@/lib/types";
 
 type Dialog =
   | { kind: "loan"; item?: Lent }
   | { kind: "repay"; lent: Lent; item?: Repayment }
+  | { kind: "multi"; lent: Lent }
   | null;
 
 const STATUS: Record<Lent["status"], { label: string; tone: "muted" | "warning" | "success" }> = {
@@ -20,7 +25,7 @@ const STATUS: Record<Lent["status"], { label: string; tone: "muted" | "warning" 
   settled: { label: "Liquidado", tone: "success" },
 };
 
-export default function PrestamosPage() {
+function LoansSection() {
   const [loans, setLoans] = useState<Lent[]>([]);
   const [reps, setReps] = useState<Repayment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,11 +126,17 @@ export default function PrestamosPage() {
                     <HandCoins className="h-3.5 w-3.5" /> Abono
                   </Button>
                 )}
+                {l.status !== "settled" && (
+                  <Button size="sm" variant="ghost" onClick={() => setDialog({ kind: "multi", lent: l })}>
+                    <ListPlus className="h-3.5 w-3.5" /> Varios
+                  </Button>
+                )}
                 <Button size="sm" variant="ghost" onClick={() => setOpen((s) => ({ ...s, [l.id]: !expanded }))}>
                   {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                   Abonos ({mine.length})
                 </Button>
                 <div className="ml-auto flex">
+                  <ReportLink tipo="prestamo" id={l.id} />
                   <Button size="icon" variant="ghost" onClick={() => setDialog({ kind: "loan", item: l })} aria-label="Editar">
                     <Pencil className="h-4 w-4" />
                   </Button>
@@ -167,9 +178,63 @@ export default function PrestamosPage() {
       <Modal open={dialog?.kind === "loan"} onClose={() => setDialog(null)} title={dialog?.kind === "loan" && dialog.item ? "Editar préstamo" : "Nuevo préstamo"}>
         {dialog?.kind === "loan" && <LentForm key={dialog.item?.id ?? "new"} initial={dialog.item} onDone={() => setDialog(null)} />}
       </Modal>
+      {dialog?.kind === "multi" && (
+        <BackfillDialog
+          open
+          onClose={() => setDialog(null)}
+          title={`Varios abonos · ${dialog.lent.person_name}`}
+          intro="Agrega de una vez los abonos que recibiste y no registraste. Cada uno con su fecha y hora real."
+          initialRows={[{ key: "n0", label: "Abono 1", date: toLocalInput(), amount: "", checked: true }]}
+          allowAdd
+          submitLabel="Registrar abonos"
+          onSubmit={async (items, method) => {
+            const lent = dialog.lent;
+            const remaining = Math.max(0, lent.amount_lent - lent.amount_returned);
+            const sum = items.reduce((t, i) => t + i.amount, 0);
+            if (sum > remaining + 0.005) return `Los abonos suman ${money(sum)} y el saldo pendiente es ${money(remaining)}.`;
+            const { error } = await createClient()
+              .from("lent_repayments")
+              .insert(items.map((i) => ({ lent_id: lent.id, amount: i.amount, received_at: i.date, method: method || null })));
+            return error?.message ?? null;
+          }}
+        />
+      )}
       <Modal open={dialog?.kind === "repay"} onClose={() => setDialog(null)} title={dialog?.kind === "repay" && dialog.item ? "Editar abono" : "Registrar abono"}>
         {dialog?.kind === "repay" && <RepaymentForm key={dialog.item?.id ?? "new"} lent={dialog.lent} repayment={dialog.item} onDone={() => setDialog(null)} />}
       </Modal>
     </div>
+  );
+}
+
+function PrestamosTabs() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const tab = params.get("tab") === "alquileres" ? "alquileres" : "prestamos";
+  const go = (t: "prestamos" | "alquileres") => router.replace(t === "alquileres" ? "/prestamos?tab=alquileres" : "/prestamos", { scroll: false });
+
+  return (
+    <div className="space-y-5">
+      <div className="inline-flex rounded-md border border-border bg-muted p-0.5 text-sm">
+        {(
+          [
+            ["prestamos", "Préstamos"],
+            ["alquileres", "Alquileres"],
+          ] as const
+        ).map(([v, label]) => (
+          <button key={v} onClick={() => go(v)} className={cn("rounded px-4 py-1 font-medium transition-colors", tab === v ? "bg-card shadow-sm" : "text-muted-foreground")}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "alquileres" ? <RentalsSection /> : <LoansSection />}
+    </div>
+  );
+}
+
+export default function PrestamosPage() {
+  return (
+    <Suspense fallback={null}>
+      <PrestamosTabs />
+    </Suspense>
   );
 }

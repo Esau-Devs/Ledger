@@ -17,6 +17,7 @@ export function ObligationForm({ initial, onDone }: { initial?: Obligation; onDo
   const [currency, setCurrency] = useState(initial?.currency ?? "USD");
   const [cycle, setCycle] = useState<Cycle>(initial?.billing_cycle ?? "monthly");
   const [due, setDue] = useState(toLocalInput(initial?.next_due_date));
+  const [startedAt, setStartedAt] = useState(initial?.started_at ? toLocalInput(initial.started_at) : "");
   const [remind, setRemind] = useState(String(initial?.reminder_days_before ?? 2));
   const [status, setStatus] = useState<ObStatus>(initial?.status ?? "active");
   const [notes, setNotes] = useState(initial?.notes ?? "");
@@ -41,6 +42,7 @@ export function ObligationForm({ initial, onDone }: { initial?: Obligation; onDo
       currency: currency.trim().toUpperCase().slice(0, 3) || "USD",
       billing_cycle: cycle,
       next_due_date: fromLocalInput(due),
+      started_at: startedAt ? fromLocalInput(startedAt) : null,
       reminder_days_before: Math.max(0, Number(remind) || 0),
       status,
       notes: notes.trim() || null,
@@ -101,6 +103,9 @@ export function ObligationForm({ initial, onDone }: { initial?: Obligation; onDo
         </Field>
         <Field label="Próximo pago (fecha y hora)" className="col-span-2">
           <Input type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} />
+        </Field>
+        <Field label="Fecha de inicio (opcional, para el informe)" className="col-span-2">
+          <Input type="datetime-local" value={startedAt} onChange={(e) => setStartedAt(e.target.value)} />
         </Field>
         {initial && (
           <Field label="Estado" className="col-span-2">

@@ -11,6 +11,7 @@ export interface Obligation {
   category: string | null;
   total_amount: number | null;
   installments_total: number | null;
+  started_at: string | null;
   installment_amount: number;
   currency: string;
   billing_cycle: Cycle;
@@ -52,7 +53,7 @@ export interface Lent {
 
 /** Fila de la vista public.ledger_entries (bitácora unificada). */
 export interface LedgerEntry {
-  kind: "pago" | "prestamo" | "abono";
+  kind: "pago" | "prestamo" | "abono" | "alquiler";
   id: string;
   user_id: string;
   occurred_at: string;
@@ -63,7 +64,7 @@ export interface LedgerEntry {
   note: string | null;
   created_at: string;
   updated_at: string;
-  type: "subscription" | "debt" | "suelto" | "prestamo" | "abono";
+  type: "subscription" | "debt" | "suelto" | "prestamo" | "abono" | "alquiler";
 }
 
 export interface Repayment {
@@ -73,6 +74,38 @@ export interface Repayment {
   amount: number;
   received_at: string;
   method: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type RentalCycle = "weekly" | "biweekly" | "monthly";
+
+export interface Rental {
+  id: string;
+  user_id: string;
+  tenant_name: string;
+  item: string;
+  rent_amount: number;
+  currency: string;
+  billing_cycle: RentalCycle;
+  start_date: string; // YYYY-MM-DD
+  end_date: string | null; // YYYY-MM-DD
+  deposit_amount: number | null;
+  status: "active" | "ended";
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface RentalPayment {
+  id: string;
+  user_id: string;
+  rental_id: string;
+  period_index: number;
+  amount: number;
+  received_at: string;
+  method: string | null;
+  note: string | null;
   created_at: string;
   updated_at: string;
 }

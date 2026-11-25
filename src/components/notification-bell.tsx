@@ -3,9 +3,11 @@ import { useState } from "react";
 import Link from "next/link";
 import { Bell, CalendarClock, HandCoins } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAll } from "@/lib/fetch-all";
+import { diffDays, rentalPeriods, rentalSummary, todayYmd } from "@/lib/rentals";
 import { useLoad } from "@/lib/refresh";
 import { cn, daysUntil, dueLabel, money } from "@/lib/utils";
-import type { Lent, Obligation } from "@/lib/types";
+import type { Lent, Obligation, Rental, RentalPayment } from "@/lib/types";
 import { Button } from "./ui";
 
 interface Item {
@@ -47,6 +49,27 @@ export function NotificationBell() {
           kind: "cobro",
         });
       }
+    }
+    try {
+      const [rs, rp] = await Promise.all([fetchAll<Rental>(sb, "rentals", "*"), fetchAll<RentalPayment>(sb, "rental_payments", "*")]);
+      const today = todayYmd();
+      for (const r of rs.filter((x) => x.status === "active")) {
+        const sum = rentalSummary(rentalPeriods(r, rp.filter((p) => p.rental_id === r.id), today));
+        if (sum.unpaidPast.length > 0) {
+          out.push({
+            key: `r-${r.id}`,
+            title: `Cobrar alquiler · ${r.tenant_name}`,
+            detail: money(sum.arrears, r.currency) + (sum.unpaidPast.length > 1 ? ` · ${sum.unpaidPast.length} periodos` : ""),
+            days: diffDays(today, sum.unpaidPast[0].start),
+            href: "/prestamos?tab=alquileres",
+            kind: "cobro",
+          });
+        } else if (sum.next && diffDays(today, sum.next.start) <= 2) {
+          out.push({ key: `r-${r.id}`, title: `Alquiler · ${r.tenant_name}`, detail: money(sum.next.remaining, r.currency), days: diffDays(today, sum.next.start), href: "/prestamos?tab=alquileres", kind: "cobro" });
+        }
+      }
+    } catch {
+      /* migration-v3 aún no aplicada */
     }
     setItems(out.sort((a, b) => a.days - b.days));
   });
